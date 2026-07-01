@@ -1,0 +1,6 @@
+{
+  "name": "ISOSpace",
+  "description": "A highly customizable ISO-style mobile launcher with vertical dock, GNOME-inspired dark dark-mode theme, customizable widgets, gestures, and custom icon packs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
