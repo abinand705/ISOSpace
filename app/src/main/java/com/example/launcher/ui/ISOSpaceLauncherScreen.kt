@@ -22,6 +22,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -58,7 +59,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -102,7 +111,13 @@ fun ISOSpaceLauncherScreen(
 
     // Inner dialogs for interactive preset apps
     var activeModalApp by rememberSaveable { mutableStateOf<String?>(null) }
+    var activeBrowserUrl by rememberSaveable { mutableStateOf("https://isospace.org") }
     val saveableStateHolder = rememberSaveableStateHolder()
+    var isEditWidgetsMode by rememberSaveable { mutableStateOf(false) }
+    var draggingWidgetId by remember { mutableStateOf<String?>(null) }
+    var dragOffsetPx by remember { mutableStateOf(Offset.Zero) }
+    var dragGridX by remember { mutableIntStateOf(0) }
+    var dragGridY by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(isSandboxUnlocked) {
         if (!isSandboxUnlocked) {
@@ -114,6 +129,8 @@ fun ISOSpaceLauncherScreen(
     BackHandler(enabled = true) {
         if (activeModalApp != null) {
             activeModalApp = null
+        } else if (isEditWidgetsMode) {
+            isEditWidgetsMode = false
         } else if (isDashOpen) {
             viewModel.setDashOpen(false)
         } else if (isControlCenterOpen) {
@@ -549,7 +566,15 @@ fun ISOSpaceLauncherScreen(
                     viewModel = viewModel,
                     apps = apps,
                     onAppClick = { app ->
-                        launchOrSimulateApp(context, app, viewModel) { modal ->
+                        launchOrSimulateApp(
+                            context = context,
+                            app = app,
+                            viewModel = viewModel,
+                            onBrowserLaunch = { url ->
+                                activeBrowserUrl = url
+                                activeModalApp = "browser"
+                            }
+                        ) { modal ->
                             activeModalApp = modal
                         }
                     },
@@ -594,26 +619,145 @@ fun ISOSpaceLauncherScreen(
                     val columns = settings.desktopColumns
                     val rows = settings.desktopRows
 
-                    Box(
+                    BoxWithConstraints(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(columns),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(4.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(
-                                items = widgets,
-                                key = { it.id },
-                                span = { widget ->
-                                    val spanCount = widget.widthSpan.coerceIn(1, columns)
-                                    GridItemSpan(spanCount)
+                        val density = LocalDensity.current
+                        val cellWidth = maxWidth / columns
+                        val cellHeight = maxHeight / rows
+
+                        // Background grid cells in Edit Mode
+                        if (isEditWidgetsMode) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                for (r in 0 until rows) {
+                                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                        for (c in 0 until columns) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .fillMaxHeight()
+                                                    .padding(4.dp)
+                                                    .border(
+                                                        width = 1.dp,
+                                                        color = activeAccentColor.copy(alpha = 0.15f),
+                                                        shape = RoundedCornerShape(16.dp)
+                                                    )
+                                                    .background(
+                                                        color = Color.White.copy(alpha = 0.02f),
+                                                        shape = RoundedCornerShape(16.dp)
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "[$c,$r]",
+                                                    fontSize = 8.sp,
+                                                    color = activeAccentColor.copy(alpha = 0.25f),
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                            ) { widget ->
+                            }
+                        }
+
+                        // Render each widget at its exact grid cell coordinates
+                        widgets.forEach { widget ->
+                            val isDraggingThis = draggingWidgetId == widget.id
+
+                            // Target coordinates for drop target visualization
+                            if (isDraggingThis) {
+                                Box(
+                                    modifier = Modifier
+                                        .offset(
+                                            x = cellWidth * dragGridX,
+                                            y = cellHeight * dragGridY
+                                        )
+                                        .size(
+                                            width = cellWidth * widget.widthSpan,
+                                            height = cellHeight * widget.heightSpan
+                                        )
+                                        .padding(6.dp)
+                                        .border(
+                                            width = 2.dp,
+                                            color = activeAccentColor.copy(alpha = 0.65f),
+                                            shape = RoundedCornerShape(24.dp)
+                                        )
+                                        .background(
+                                            color = activeAccentColor.copy(alpha = 0.08f),
+                                            shape = RoundedCornerShape(24.dp)
+                                        )
+                                )
+                            }
+
+                            // Layout position: standard coordinates + active drag offset
+                            val offsetX = (cellWidth * widget.xGrid) + (if (isDraggingThis) with(density) { dragOffsetPx.x.toDp() } else 0.dp)
+                            val offsetY = (cellHeight * widget.yGrid) + (if (isDraggingThis) with(density) { dragOffsetPx.y.toDp() } else 0.dp)
+
+                            val dragModifier = if (isEditWidgetsMode) {
+                                Modifier.pointerInput(widget.id) {
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            draggingWidgetId = widget.id
+                                            dragOffsetPx = Offset.Zero
+                                            dragGridX = widget.xGrid
+                                            dragGridY = widget.yGrid
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            dragOffsetPx += dragAmount
+
+                                            val cellWidthPx = with(density) { cellWidth.toPx() }
+                                            val cellHeightPx = with(density) { cellHeight.toPx() }
+
+                                            val currentLeftPx = (widget.xGrid * cellWidthPx) + dragOffsetPx.x
+                                            val currentTopPx = (widget.yGrid * cellHeightPx) + dragOffsetPx.y
+
+                                            val targetX = (currentLeftPx / cellWidthPx).roundToInt()
+                                                .coerceIn(0, columns - widget.widthSpan)
+                                            val targetY = (currentTopPx / cellHeightPx).roundToInt()
+                                                .coerceIn(0, rows - widget.heightSpan)
+
+                                            dragGridX = targetX
+                                            dragGridY = targetY
+                                        },
+                                        onDragEnd = {
+                                            viewModel.moveWidget(widget.id, dragGridX, dragGridY)
+                                            draggingWidgetId = null
+                                            dragOffsetPx = Offset.Zero
+                                        },
+                                        onDragCancel = {
+                                            draggingWidgetId = null
+                                            dragOffsetPx = Offset.Zero
+                                        }
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            }
+
+                            val scale = if (isDraggingThis) 1.05f else 1f
+                            val alphaValue = if (isDraggingThis) 0.85f else 1f
+                            val widgetZIndex = if (isDraggingThis) 10f else 1f
+
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = offsetX, y = offsetY)
+                                    .size(
+                                        width = cellWidth * widget.widthSpan,
+                                        height = cellHeight * widget.heightSpan
+                                    )
+                                    .padding(4.dp)
+                                    .graphicsLayer {
+                                        scaleX = scale
+                                        scaleY = scale
+                                        alpha = alphaValue
+                                    }
+                                    .zIndex(widgetZIndex)
+                                    .then(dragModifier)
+                            ) {
                                 ISOSpaceWidgetRegistry(
                                     config = widget,
                                     onRemove = {
@@ -626,9 +770,7 @@ fun ISOSpaceLauncherScreen(
                                         viewModel.submitTerminalCommand(cmd)
                                     },
                                     terminalHistory = terminalHistory,
-                                    modifier = Modifier
-                                        .height((130 * widget.heightSpan).dp)
-                                        .animateItem()
+                                    modifier = Modifier.fillMaxSize()
                                 )
                             }
                         }
@@ -648,6 +790,78 @@ fun ISOSpaceLauncherScreen(
                             .padding(bottom = 8.dp)
                     )
                 }
+
+                // Floating control buttons for widget drag-and-drop edit mode
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 24.dp, end = 16.dp)
+                        .zIndex(20f)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (isEditWidgetsMode) {
+                            // Add widget button in Edit Mode
+                            FloatingActionButton(
+                                onClick = {
+                                    // Open the customizer to Tab 3 (Add Widgets tab)!
+                                    viewModel.setCustomizerOpen(true)
+                                },
+                                containerColor = Color(0xCC2A2A2E),
+                                contentColor = Color.White,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.height(48.dp).testTag("add_widget_edit_fab")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add Widget", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Add Widget", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            // Finish / Done button
+                            FloatingActionButton(
+                                onClick = { isEditWidgetsMode = false },
+                                containerColor = activeAccentColor,
+                                contentColor = Color.White,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.height(48.dp).testTag("save_widgets_fab")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                ) {
+                                    Icon(Icons.Default.Check, contentDescription = "Finish Editing", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Done", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } else {
+                            // Edit Mode activation button
+                            FloatingActionButton(
+                                onClick = { isEditWidgetsMode = true },
+                                containerColor = Color(0xCC2A2A2E),
+                                contentColor = Color.White,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.height(48.dp).testTag("edit_widgets_fab")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                ) {
+                                    Icon(Icons.Default.DashboardCustomize, contentDescription = "Edit Widgets Mode", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Edit Widgets", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Right side dock option with Swipe-to-Minimize
@@ -660,7 +874,15 @@ fun ISOSpaceLauncherScreen(
                     viewModel = viewModel,
                     apps = apps,
                     onAppClick = { app ->
-                        launchOrSimulateApp(context, app, viewModel) { modal ->
+                        launchOrSimulateApp(
+                            context = context,
+                            app = app,
+                            viewModel = viewModel,
+                            onBrowserLaunch = { url ->
+                                activeBrowserUrl = url
+                                activeModalApp = "browser"
+                            }
+                        ) { modal ->
                             activeModalApp = modal
                         }
                     },
@@ -698,7 +920,15 @@ fun ISOSpaceLauncherScreen(
                 onClose = { viewModel.setDashOpen(false) },
                 onLaunchApp = { app ->
                     viewModel.setDashOpen(false)
-                    launchOrSimulateApp(context, app, viewModel) { modal ->
+                    launchOrSimulateApp(
+                        context = context,
+                        app = app,
+                        viewModel = viewModel,
+                        onBrowserLaunch = { url ->
+                            activeBrowserUrl = url
+                            activeModalApp = "browser"
+                        }
+                    ) { modal ->
                         activeModalApp = modal
                     }
                 },
@@ -877,7 +1107,15 @@ fun ISOSpaceLauncherScreen(
                         apps = apps,
                         onAppClick = { app ->
                             isAutohideDockRevealed = false // auto-close on launching app
-                            launchOrSimulateApp(context, app, viewModel) { modal ->
+                            launchOrSimulateApp(
+                                context = context,
+                                app = app,
+                                viewModel = viewModel,
+                                onBrowserLaunch = { url ->
+                                    activeBrowserUrl = url
+                                    activeModalApp = "browser"
+                                }
+                            ) { modal ->
                                 activeModalApp = modal
                             }
                         },
@@ -998,7 +1236,7 @@ fun ISOSpaceLauncherScreen(
                 } else {
                     when (currentModal) {
                         "calculator" -> ShellCalculatorModal { activeModalApp = null }
-                        "browser" -> ShellWebBrowserModal { activeModalApp = null }
+                        "browser" -> ShellWebBrowserModal(initialUrl = activeBrowserUrl) { activeModalApp = null }
                         "gallery" -> ShellGalleryModal { activeModalApp = null }
                         "camera" -> ShellCameraModal { activeModalApp = null }
                         "notes" -> ShellNotesModal { activeModalApp = null }
@@ -2463,6 +2701,9 @@ fun ISOSpaceCustomizerDialog(
                                 WidgetAddRow(WidgetType.WEATHER_INFO, "Micro Weather card", Icons.Default.CloudQueue, Color(settings.accentColor.hexAccent)) {
                                     viewModel.addWidget(WidgetType.WEATHER_INFO)
                                 }
+                                WidgetAddRow(WidgetType.BATTERY_STATUS, "Battery Status Indicator", Icons.Default.BatteryChargingFull, Color(settings.accentColor.hexAccent)) {
+                                    viewModel.addWidget(WidgetType.BATTERY_STATUS)
+                                }
                             }
                         }
                         4 -> { // Additional tab (Hardcore settings)
@@ -3266,8 +3507,36 @@ fun ShellCalculatorModal(onClose: () -> Unit) {
 
 // Simulated App Web Browser Modal dialog
 @Composable
-fun ShellWebBrowserModal(onClose: () -> Unit) {
-    var webUrl by rememberSaveable { mutableStateOf("https://isospace.org") }
+fun ShellWebBrowserModal(initialUrl: String = "https://isospace.org", onClose: () -> Unit) {
+    var webUrl by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    var loadingProgress by remember { mutableStateOf(0f) }
+    var canGoBack by remember { mutableStateOf(false) }
+    var canGoForward by remember { mutableStateOf(false) }
+
+    fun loadFormattedUrl(url: String, wv: WebView?) {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return
+        val targetUrl = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else if (trimmed.contains(".") && !trimmed.contains(" ")) {
+            "https://$trimmed"
+        } else {
+            try {
+                "https://www.google.com/search?q=${java.net.URLEncoder.encode(trimmed, "UTF-8")}"
+            } catch (e: Exception) {
+                "https://www.google.com/search?q=$trimmed"
+            }
+        }
+        wv?.loadUrl(targetUrl)
+    }
+
+    // Intercept back key to handle WebView back stack
+    BackHandler(enabled = canGoBack) {
+        webView?.goBack()
+    }
+
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -3284,21 +3553,78 @@ fun ShellWebBrowserModal(onClose: () -> Unit) {
                     )
                 )
             ),
-            modifier = Modifier.fillMaxWidth(0.92f).height(485.dp)
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.85f)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 // Browser URL address bar row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(Icons.Default.Language, contentDescription = null, tint = UbuntuWarmOrange, modifier = Modifier.size(18.dp))
-                    
+                    IconButton(
+                        onClick = { webView?.goBack() },
+                        enabled = canGoBack,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = if (canGoBack) Color.White else Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { webView?.goForward() },
+                        enabled = canGoForward,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ArrowForward,
+                            contentDescription = "Forward",
+                            tint = if (canGoForward) Color.White else Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { webView?.reload() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Reload",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            webUrl = "https://isospace.org"
+                            webView?.loadUrl("https://isospace.org")
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Home,
+                            contentDescription = "Home",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
                     var isUrlFocused by remember { mutableStateOf(false) }
                     androidx.compose.foundation.text.BasicTextField(
                         value = webUrl,
                         onValueChange = { webUrl = it },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Go
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onGo = { loadFormattedUrl(webUrl, webView) }
+                        ),
                         textStyle = androidx.compose.ui.text.TextStyle(
                             color = Color.White,
                             fontSize = 13.sp,
@@ -3325,7 +3651,7 @@ fun ShellWebBrowserModal(onClose: () -> Unit) {
                             ) {
                                 if (webUrl.isEmpty()) {
                                     Text(
-                                        text = "Enter website URL or search...",
+                                        text = "Enter URL or search...",
                                         color = Color.Gray,
                                         fontSize = 13.sp
                                     )
@@ -3335,56 +3661,95 @@ fun ShellWebBrowserModal(onClose: () -> Unit) {
                         }
                     )
 
-                    IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
+                    IconButton(
+                        onClick = { loadFormattedUrl(webUrl, webView) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = "Go",
+                            tint = UbuntuWarmOrange,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
-                // Simulated webpage body
+                // Progress Indicator
+                if (isLoading) {
+                    LinearProgressIndicator(
+                        progress = loadingProgress,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp),
+                        color = UbuntuWarmOrange,
+                        trackColor = Color.Transparent
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Web Browser Frame (WebView)
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(Color.White)
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        // Custom vector logo for simulated page
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFE95420)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Adjust, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "ISOSpace Enterprise Mobile",
-                            color = Color(0xFF2C001E),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Connected in Desktop browser mode successfully.",
-                            color = Color.DarkGray,
-                            fontSize = 11.sp,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { webUrl = "https://wiki.isospace.org" },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C001E))
-                        ) {
-                            Text("Browse Documentation wiki")
-                        }
-                    }
+                    AndroidView(
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.apply {
+                                    javaScriptEnabled = true
+                                    domStorageEnabled = true
+                                    useWideViewPort = true
+                                    loadWithOverviewMode = true
+                                    setSupportZoom(true)
+                                    builtInZoomControls = true
+                                    displayZoomControls = false
+                                }
+                                webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                        return false
+                                    }
+
+                                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                        super.onPageStarted(view, url, favicon)
+                                        isLoading = true
+                                        url?.let { webUrl = it }
+                                    }
+
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        super.onPageFinished(view, url)
+                                        isLoading = false
+                                        url?.let { webUrl = it }
+                                        canGoBack = view?.canGoBack() ?: false
+                                        canGoForward = view?.canGoForward() ?: false
+                                    }
+                                }
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                        super.onProgressChanged(view, newProgress)
+                                        loadingProgress = newProgress / 100f
+                                    }
+                                }
+                                loadUrl(webUrl)
+                                webView = this
+                            }
+                        },
+                        update = { view ->
+                            // WebView manages its own navigation state
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
@@ -3398,6 +3763,7 @@ private fun launchOrSimulateApp(
     context: Context,
     app: AppItem,
     viewModel: LauncherViewModel,
+    onBrowserLaunch: (String) -> Unit,
     onSimulate: (String) -> Unit
 ) {
     viewModel.openApp(app.packageName)
@@ -3439,13 +3805,31 @@ private fun launchOrSimulateApp(
                 onSimulate("calculator")
             }
             "com.dummy.telegram" -> {
-                Toast.makeText(context, "Telegram Chat initialized! Notification badge cleared.", Toast.LENGTH_SHORT).show()
+                onBrowserLaunch("https://web.telegram.org")
             }
             "com.dummy.instagram" -> {
-                Toast.makeText(context, "Instagram: Loading stories feed...", Toast.LENGTH_SHORT).show()
+                onBrowserLaunch("https://www.instagram.com")
             }
             "com.dummy.whatsapp" -> {
-                Toast.makeText(context, "WhatsApp: Chat engine online! Notification badge cleared.", Toast.LENGTH_SHORT).show()
+                onBrowserLaunch("https://web.whatsapp.com")
+            }
+            "com.dummy.youtube" -> {
+                onBrowserLaunch("https://m.youtube.com")
+            }
+            "com.dummy.spotify" -> {
+                onBrowserLaunch("https://open.spotify.com")
+            }
+            "com.dummy.maps" -> {
+                onBrowserLaunch("https://www.google.com/maps")
+            }
+            "com.dummy.gmail" -> {
+                onBrowserLaunch("https://mail.google.com")
+            }
+            "com.dummy.discord" -> {
+                onBrowserLaunch("https://discord.com/login")
+            }
+            "com.dummy.reddit" -> {
+                onBrowserLaunch("https://www.reddit.com")
             }
             "com.dummy.vlc" -> {
                 onSimulate("vlc")

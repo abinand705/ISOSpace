@@ -19,7 +19,8 @@ enum class WidgetType {
     ISOSPACE_CLOCK,     // Classic bold/semilight ISOSpace style clock & calendar
     BASH_TERMINAL,    // Quick Notes terminal style with keyboard input
     WEATHER_INFO,     // Desktop micro-weather widget
-    QUICK_FOLDER      // Customizable app folder widget
+    QUICK_FOLDER,      // Customizable app folder widget
+    BATTERY_STATUS    // Custom modern battery and charging status widget
 }
 
 data class WidgetConfig(

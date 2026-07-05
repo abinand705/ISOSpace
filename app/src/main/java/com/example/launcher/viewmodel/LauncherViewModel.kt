@@ -228,7 +228,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             AppItem("com.dummy.terminal", "Terminal", "Terminal", "Applications", null, 0xFF333333, false, 0),
             AppItem("com.dummy.vlc", "VLC", "VLC", "Applications", null, 0xFFFF5722, false, 0),
             AppItem("com.dummy.browser", "Web Browser", "Web Browser", "Applications", null, 0xFFE05A10, false, 0),
-            AppItem("com.dummy.calculator", "Calculator", "Calculator", "Applications", null, 0xFF2E7D32, false, 0)
+            AppItem("com.dummy.calculator", "Calculator", "Calculator", "Applications", null, 0xFF2E7D32, false, 0),
+            AppItem("com.dummy.telegram", "Telegram", "Telegram", "Applications", null, 0xFF2196F3, true, 0),
+            AppItem("com.dummy.instagram", "Instagram", "Instagram", "Applications", null, 0xFFE1306C, true, 0),
+            AppItem("com.dummy.whatsapp", "WhatsApp", "WhatsApp", "Applications", null, 0xFF25D366, true, 0),
+            AppItem("com.dummy.youtube", "YouTube", "YouTube", "Applications", null, 0xFFFF0000, true, 0),
+            AppItem("com.dummy.spotify", "Spotify", "Spotify", "Applications", null, 0xFF1DB954, true, 0),
+            AppItem("com.dummy.maps", "Google Maps", "Google Maps", "Applications", null, 0xFF4CAF50, true, 0),
+            AppItem("com.dummy.gmail", "Gmail", "Gmail", "Applications", null, 0xFFD44638, true, 0),
+            AppItem("com.dummy.discord", "Discord", "Discord", "Applications", null, 0xFF5865F2, true, 0),
+            AppItem("com.dummy.reddit", "Reddit", "Reddit", "Applications", null, 0xFFFF4500, true, 0)
         )
 
         val uninstalledVirtual = prefs.loadUninstalledVirtualApps()
@@ -347,6 +356,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
         _apps.value = updatedApps
         saveCustomAppsState()
+        scanDeviceApps()
     }
 
     fun clearNotificationBadge(packageName: String) {

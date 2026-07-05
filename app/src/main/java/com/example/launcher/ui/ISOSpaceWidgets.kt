@@ -43,6 +43,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.platform.LocalContext
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.app.ActivityManager
 import android.os.Environment
 import android.os.StatFs
@@ -92,6 +95,7 @@ fun ISOSpaceWidgetRegistry(
                 )
                 WidgetType.WEATHER_INFO -> WeatherWidget(config)
                 WidgetType.QUICK_FOLDER -> QuickFolderWidget()
+                WidgetType.BATTERY_STATUS -> BatteryStatusWidget()
             }
 
             // Small controls row in upper-right corner (Resize Settings + Delete)
@@ -775,5 +779,137 @@ fun FolderAppItem(label: String, color: Color) {
             maxLines = 1,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+@Composable
+fun BatteryStatusWidget() {
+    val context = LocalContext.current
+    var batteryLevel by remember { mutableIntStateOf(85) }
+    var isCharging by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                val batteryStatus: Intent? = context.registerReceiver(
+                    null,
+                    IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+                )
+                val level: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                if (level != -1 && scale != -1) {
+                    batteryLevel = (level * 100 / scale.toFloat()).toInt()
+                }
+                val status: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                             status == BatteryManager.BATTERY_STATUS_FULL
+            } catch (e: Exception) {
+                // Fallback simulation value in case of exceptions
+                batteryLevel = 78
+                isCharging = false
+            }
+            delay(5000)
+        }
+    }
+
+    val batteryColor = when {
+        isCharging -> Color(0xFF4CAF50) // Charging green
+        batteryLevel > 50 -> Color(0xFF27C93F) // Healthy green
+        batteryLevel > 20 -> Color(0xFFFFB300) // Amber
+        else -> Color(0xFFFF5F56) // Critical red
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.weight(1f).padding(start = 8.dp)
+        ) {
+            Text(
+                text = "Battery",
+                style = TextStyle(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = Color.White
+                )
+            )
+            Text(
+                text = if (isCharging) "Charging..." else "On Battery",
+                style = TextStyle(
+                    fontSize = 10.sp,
+                    color = if (isCharging) Color(0xFF81C784) else Color(0xB3FFFFFF),
+                    fontWeight = if (isCharging) FontWeight.Bold else FontWeight.Normal
+                )
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (isCharging) Icons.Default.BatteryChargingFull else {
+                        when {
+                            batteryLevel > 80 -> Icons.Default.BatteryFull
+                            batteryLevel > 20 -> Icons.Default.BatteryStd
+                            else -> Icons.Default.BatteryAlert
+                        }
+                    },
+                    contentDescription = "Battery Status Icon",
+                    tint = batteryColor,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = if (isCharging) "Power Connected" else "Discharging",
+                    fontSize = 8.sp,
+                    color = Color(0x99FFFFFF)
+                )
+            }
+        }
+
+        // Circular Battery percentage ring
+        Box(
+            modifier = Modifier.size(60.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                // Background Track
+                drawArc(
+                    color = Color(0x1AFFFFFF),
+                    startAngle = 135f,
+                    sweepAngle = 270f,
+                    useCenter = false,
+                    style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                )
+
+                // Fill Arc
+                drawArc(
+                    color = batteryColor,
+                    startAngle = 135f,
+                    sweepAngle = 270f * (batteryLevel / 100f),
+                    useCenter = false,
+                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "$batteryLevel%",
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontFamily = FontFamily.SansSerif
+                    )
+                )
+            }
+        }
     }
 }
