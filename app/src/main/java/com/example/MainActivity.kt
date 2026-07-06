@@ -13,12 +13,25 @@ import com.example.launcher.ui.ISOSpaceLauncherScreen
 import com.example.launcher.viewmodel.LauncherViewModel
 import com.example.ui.theme.MyApplicationTheme
 
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+
 class MainActivity : ComponentActivity() {
     private val viewModel: LauncherViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Observe and apply real-time brightness to the window
+        lifecycleScope.launch {
+            viewModel.brightness.collect { brightnessVal ->
+                val lp = window.attributes
+                lp.screenBrightness = brightnessVal.coerceIn(0.01f, 1.0f)
+                window.attributes = lp
+            }
+        }
+
         setContent {
             MyApplicationTheme {
                 Surface(

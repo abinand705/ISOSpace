@@ -194,14 +194,18 @@ fun ISOSpaceLauncherScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("isospace_launcher_root")
-            .pointerInput(Unit) {
+            .pointerInput(isDashOpen, isControlCenterOpen) {
                 // Unified screen drag/tap detector for smooth OS gestures
                 detectTapGestures(
                     onDoubleTap = {
-                        viewModel.handleGestureTrigger(LauncherGesture.DOUBLE_TAP)
+                        if (!isDashOpen && !isControlCenterOpen) {
+                            viewModel.handleGestureTrigger(LauncherGesture.DOUBLE_TAP)
+                        }
                     },
                     onLongPress = {
-                        viewModel.handleGestureTrigger(LauncherGesture.LONG_PRESS)
+                        if (!isDashOpen && !isControlCenterOpen) {
+                            viewModel.handleGestureTrigger(LauncherGesture.LONG_PRESS)
+                        }
                     },
                     onTap = {
                         // Close floating menus
@@ -210,7 +214,7 @@ fun ISOSpaceLauncherScreen(
                     }
                 )
             }
-            .pointerInput(Unit) {
+            .pointerInput(isDashOpen, isControlCenterOpen) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -218,19 +222,23 @@ fun ISOSpaceLauncherScreen(
                         val prevDragAmount = event.changes.firstOrNull()?.previousPosition ?: Offset.Zero
                         
                         if (event.changes.firstOrNull()?.pressed == true) {
-                            totalDragY += (dragAmount.y - prevDragAmount.y)
-                            totalDragX += (dragAmount.x - prevDragAmount.x)
+                            if (!isDashOpen && !isControlCenterOpen) {
+                                totalDragY += (dragAmount.y - prevDragAmount.y)
+                                totalDragX += (dragAmount.x - prevDragAmount.x)
+                            }
                         } else {
-                            // Drag released, process vector gestures
-                            if (abs(totalDragY) > 120) {
-                                if (totalDragY > 0) {
-                                    viewModel.handleGestureTrigger(LauncherGesture.SWIPE_DOWN)
-                                } else {
-                                    viewModel.handleGestureTrigger(LauncherGesture.SWIPE_UP)
+                            if (!isDashOpen && !isControlCenterOpen) {
+                                // Drag released, process vector gestures
+                                if (abs(totalDragY) > 120) {
+                                    if (totalDragY > 0) {
+                                        viewModel.handleGestureTrigger(LauncherGesture.SWIPE_DOWN)
+                                    } else {
+                                        viewModel.handleGestureTrigger(LauncherGesture.SWIPE_UP)
+                                    }
+                                } else if (abs(totalDragX) > 150) {
+                                    // Pinch / clear signal simulation
+                                    viewModel.handleGestureTrigger(LauncherGesture.TWO_FINGER_PINCH)
                                 }
-                            } else if (abs(totalDragX) > 150) {
-                                // Pinch / clear signal simulation
-                                viewModel.handleGestureTrigger(LauncherGesture.TWO_FINGER_PINCH)
                             }
                             totalDragY = 0f
                             totalDragX = 0f
@@ -735,7 +743,13 @@ fun ISOSpaceLauncherScreen(
                                     )
                                 }
                             } else {
-                                Modifier
+                                Modifier.pointerInput(widget.id) {
+                                    detectTapGestures(
+                                        onLongPress = {
+                                            isEditWidgetsMode = true
+                                        }
+                                    )
+                                }
                             }
 
                             val scale = if (isDraggingThis) 1.05f else 1f
@@ -792,17 +806,17 @@ fun ISOSpaceLauncherScreen(
                 }
 
                 // Floating control buttons for widget drag-and-drop edit mode
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 24.dp, end = 16.dp)
-                        .zIndex(20f)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                if (isEditWidgetsMode) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = 24.dp, end = 16.dp)
+                            .zIndex(20f)
                     ) {
-                        if (isEditWidgetsMode) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             // Add widget button in Edit Mode
                             FloatingActionButton(
                                 onClick = {
@@ -839,24 +853,6 @@ fun ISOSpaceLauncherScreen(
                                     Icon(Icons.Default.Check, contentDescription = "Finish Editing", modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("Done", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        } else {
-                            // Edit Mode activation button
-                            FloatingActionButton(
-                                onClick = { isEditWidgetsMode = true },
-                                containerColor = Color(0xCC2A2A2E),
-                                contentColor = Color.White,
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.height(48.dp).testTag("edit_widgets_fab")
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                ) {
-                                    Icon(Icons.Default.DashboardCustomize, contentDescription = "Edit Widgets Mode", modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Edit Widgets", fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1767,7 +1763,7 @@ fun ISOSpaceDockAppIcon(
         "com.isospace.terminal" -> Color(0xFF0C0C0C)
         "com.isospace.files" -> Color(0xFFE95420)
         "com.isospace.browser" -> Color(0xFFE05A10)
-        "com.isospace.software" -> Color(0xFFA62D68)
+        "com.isospace.software", "com.android.vending" -> Color(0xFF00E676)
         "com.isospace.settings" -> Color(0xFF4C4C4C)
         else -> Color(app.customColor ?: 0xFF77216F)
     }
@@ -1789,7 +1785,7 @@ fun ISOSpaceDockAppIcon(
         "com.isospace.terminal" -> Icons.Default.Terminal
         "com.isospace.files" -> Icons.Default.Folder
         "com.isospace.browser" -> Icons.Default.Language
-        "com.isospace.software" -> Icons.Default.ShoppingBag
+        "com.isospace.software", "com.android.vending" -> Icons.Default.ShoppingBag
         "com.isospace.settings" -> Icons.Default.DisplaySettings
         "com.isospace.music" -> Icons.Default.MusicNote
         "com.isospace.email" -> Icons.Default.Email
@@ -1894,6 +1890,11 @@ fun GnomeDashOverlay(
                     radius = 1800f
                 )
             )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClose() }
+                )
+            }
             .statusBarsPadding()
             .padding(top = 8.dp)
             .testTag("gnome_dash_drawer")
@@ -2000,7 +2001,7 @@ fun AppLaunchGridCard(
         "com.isospace.terminal" -> Color(0xFF0A0A0A)
         "com.isospace.files" -> Color(0xFFE95420)
         "com.isospace.browser" -> Color(0xFFE05A10)
-        "com.isospace.software" -> Color(0xFFA62D68)
+        "com.isospace.software", "com.android.vending" -> Color(0xFF00E676)
         "com.isospace.settings" -> Color(0xFF4C4C4C)
         "com.isospace.music" -> Color(0xFFF57C00)
         else -> Color(app.customColor ?: 0xFF8A8A8A)
@@ -2023,7 +2024,7 @@ fun AppLaunchGridCard(
         "com.isospace.terminal" -> Icons.Default.Terminal
         "com.isospace.files" -> Icons.Default.Folder
         "com.isospace.browser" -> Icons.Default.Language
-        "com.isospace.software" -> Icons.Default.ShoppingBag
+        "com.isospace.software", "com.android.vending" -> Icons.Default.ShoppingBag
         "com.isospace.settings" -> Icons.Default.DisplaySettings
         "com.isospace.music" -> Icons.Default.MusicNote
         "com.isospace.email" -> Icons.Default.Email
@@ -2121,7 +2122,10 @@ fun ISOSpaceControlCenterOverlay(
         modifier = Modifier
             .fillMaxWidth()
             .padding(12.dp)
-            .testTag("isospace_control_center"),
+            .testTag("isospace_control_center")
+            .pointerInput(Unit) {
+                detectTapGestures { }
+            },
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFA1E1E1E)),
         border = BorderStroke(1.dp, Color(0x33FFFFFF))
@@ -3770,8 +3774,8 @@ private fun launchOrSimulateApp(
     if (app.packageName.startsWith("clone.")) {
         viewModel.clearNotificationBadge(app.packageName)
         onSimulate(app.packageName)
-    } else if (app.packageName.startsWith("com.dummy") || app.packageName.startsWith("com.isospace")) {
-        // Handle virtual/simulated apps inside launcher to eliminate dead ends
+    } else if (app.packageName.startsWith("com.dummy") || app.packageName.startsWith("com.isospace") || app.packageName == "com.android.vending") {
+        // Handle virtual/simulated apps and play store inside launcher to eliminate dead ends
         viewModel.clearNotificationBadge(app.packageName)
         when (app.packageName) {
             "com.dummy.terminal", "com.isospace.terminal" -> {
@@ -3786,8 +3790,17 @@ private fun launchOrSimulateApp(
             "com.dummy.browser", "com.isospace.browser" -> {
                 onSimulate("browser")
             }
-            "com.dummy.store", "com.isospace.software" -> {
-                onSimulate("software")
+            "com.dummy.store", "com.isospace.software", "com.android.vending" -> {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage("com.android.vending")
+                if (launchIntent != null) {
+                    try {
+                        context.startActivity(launchIntent)
+                    } catch (e: Exception) {
+                        onBrowserLaunch("https://play.google.com/store")
+                    }
+                } else {
+                    onBrowserLaunch("https://play.google.com/store")
+                }
             }
             "com.dummy.clock" -> {
                 onSimulate("clock")

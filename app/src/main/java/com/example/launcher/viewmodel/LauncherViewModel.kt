@@ -3,6 +3,13 @@ package com.example.launcher.viewmodel
 import android.app.Application
 import android.content.Intent
 import android.content.pm.ResolveInfo
+import android.content.Context
+import android.net.wifi.WifiManager
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothAdapter
+import android.media.AudioManager
+import android.provider.Settings
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.launcher.data.LauncherPreferences
@@ -50,17 +57,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // Control Center Simulated States
-    private val _brightness = MutableStateFlow(0.8f)
+    // Control Center Simulated & Real States
+    private val wifiManager = application.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    private val bluetoothManager = application.applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    private val audioManager = application.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+
+    private val _brightness = MutableStateFlow(
+        try {
+            Settings.System.getInt(application.contentResolver, Settings.System.SCREEN_BRIGHTNESS).toFloat() / 255f
+        } catch (e: Exception) {
+            0.8f
+        }
+    )
     val brightness: StateFlow<Float> = _brightness.asStateFlow()
 
-    private val _volume = MutableStateFlow(0.7f)
+    private val _volume = MutableStateFlow(
+        audioManager?.let {
+            val max = it.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            if (max > 0) it.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max else 0.7f
+        } ?: 0.7f
+    )
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
-    private val _isWifiEnabled = MutableStateFlow(true)
+    private val _isWifiEnabled = MutableStateFlow(wifiManager?.isWifiEnabled ?: true)
     val isWifiEnabled: StateFlow<Boolean> = _isWifiEnabled.asStateFlow()
 
-    private val _isBluetoothEnabled = MutableStateFlow(false)
+    private val _isBluetoothEnabled = MutableStateFlow(bluetoothManager?.adapter?.isEnabled ?: false)
     val isBluetoothEnabled: StateFlow<Boolean> = _isBluetoothEnabled.asStateFlow()
 
     private val _terminalNotesHistory = MutableStateFlow<List<String>>(emptyList())
@@ -219,6 +241,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private fun scanDeviceApps() {
         val defaultApps = listOf(
+            AppItem("com.android.vending", "Play Store", "Play Store", "Applications", null, 0xFF00E676, false, 0),
             AppItem("com.dummy.gallery", "Gallery", "Gallery", "Applications", null, 0xFF9C27B0, false, 0),
             AppItem("com.dummy.notes", "Notes", "Notes", "Applications", null, 0xFFFF9800, false, 0),
             AppItem("com.dummy.files", "Files", "Files", "Applications", null, 0xFF0288D1, false, 0),
@@ -555,21 +578,93 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // Simulated control states
+    // Real hardware controls and fallback actions
     fun updateBrightness(v: Float) {
-        _brightness.value = v.coerceIn(0.1f, 1.0f)
+        val target = v.coerceIn(0.01f, 1.0f)
+        _brightness.value = target
+        
+        // Try updating system settings if permission is granted
+        if (Settings.System.canWrite(getApplication())) {
+            try {
+                Settings.System.putInt(
+                    getApplication<Application>().contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    (target * 255).toInt().coerceIn(1, 255)
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun updateVolume(v: Float) {
-        _volume.value = v.coerceIn(0f, 1.0f)
+        val target = v.coerceIn(0f, 1.0f)
+        _volume.value = target
+        audioManager?.let { am ->
+            try {
+                val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                val volValue = (target * max).toInt().coerceIn(0, max)
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, volValue, AudioManager.FLAG_SHOW_UI)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun toggleWifi() {
-        _isWifiEnabled.value = !_isWifiEnabled.value
+        val nextVal = !_isWifiEnabled.value
+        _isWifiEnabled.value = nextVal
+        wifiManager?.let { wm ->
+            try {
+                wm.isWifiEnabled = nextVal
+            } catch (e: Exception) {
+                // If it fails (due to API 29+ restrictions), launch the system Wifi toggle Panel or Settings
+                val context = getApplication<Application>()
+                val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    Intent(Settings.Panel.ACTION_WIFI)
+                } else {
+                    Intent(Settings.ACTION_WIFI_SETTINGS)
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    context.startActivity(intent)
+                } catch (e2: Exception) {
+                    try {
+                        val fallbackIntent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(fallbackIntent)
+                    } catch (e3: Exception) {
+                        e3.printStackTrace()
+                    }
+                }
+            }
+        }
     }
 
     fun toggleBluetooth() {
-        _isBluetoothEnabled.value = !_isBluetoothEnabled.value
+        val nextVal = !_isBluetoothEnabled.value
+        _isBluetoothEnabled.value = nextVal
+        bluetoothManager?.adapter?.let { adapter ->
+            try {
+                if (nextVal) {
+                    adapter.enable()
+                } else {
+                    adapter.disable()
+                }
+            } catch (e: Exception) {
+                // If direct toggling fails or requires extra permissions, open the Bluetooth settings panel
+                val context = getApplication<Application>()
+                val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e2: Exception) {
+                    e2.printStackTrace()
+                }
+            }
+        }
     }
 
     fun isTutorialCompleted(): Boolean {
