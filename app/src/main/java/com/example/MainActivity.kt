@@ -32,6 +32,20 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Dynamically toggle FLAG_SECURE when sandbox is unlocked
+        lifecycleScope.launch {
+            viewModel.isSandboxUnlocked.collect { isUnlocked ->
+                if (isUnlocked) {
+                    window.setFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                        android.view.WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                } else {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+        }
+
         setContent {
             MyApplicationTheme {
                 Surface(
@@ -53,6 +67,11 @@ class MainActivity : ComponentActivity() {
         } else {
             // Only dock exit button is allowed to close/exit the application
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.lockSandbox()
     }
 }
 

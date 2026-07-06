@@ -563,7 +563,13 @@ fun SandboxBootloaderScreen(
                         // Submit Login button
                         Button(
                             onClick = {
-                                if (viewModel.verifySandbox(loginUsername, loginPassword)) {
+                                val cooldownTimeLeft = viewModel.getSandboxLockoutCooldownTimeLeft()
+                                if (cooldownTimeLeft > 0L) {
+                                    errorMessage = "TOO MANY FAILED ATTEMPTS. LOCKED OUT. COOLDOWN ACTIVE: ${(cooldownTimeLeft / 1000) + 1}s"
+                                    val currentLogs = terminalLogs.toMutableList()
+                                    currentLogs.add("[-] LOGIN ATTEMPT BLOCKED: RATE-LIMITING ACTIVE (${(cooldownTimeLeft / 1000) + 1}s remaining)")
+                                    terminalLogs = currentLogs.toList()
+                                } else if (viewModel.verifySandbox(loginUsername, loginPassword)) {
                                     errorMessage = null
                                     step = "booting"
                                     scope.launch {
@@ -582,10 +588,18 @@ fun SandboxBootloaderScreen(
                                         viewModel.unlockSandbox()
                                     }
                                 } else {
-                                    errorMessage = "INCORRECT USERNAME OR CRYPTOGRAPHIC PASS KEY"
-                                    val currentLogs = terminalLogs.toMutableList()
-                                    currentLogs.add("[-] LOGIN ATTEMPT REJECTED: INVALID SIGNATURE")
-                                    terminalLogs = currentLogs.toList()
+                                    val newCooldown = viewModel.getSandboxLockoutCooldownTimeLeft()
+                                    if (newCooldown > 0L) {
+                                        errorMessage = "TOO MANY FAILED ATTEMPTS. COOLDOWN ENGAGED FOR 30s"
+                                        val currentLogs = terminalLogs.toMutableList()
+                                        currentLogs.add("[-] COOLDOWN ACTIVE: SECURITY LOCKOUT ENGAGED")
+                                        terminalLogs = currentLogs.toList()
+                                    } else {
+                                        errorMessage = "INCORRECT USERNAME OR CRYPTOGRAPHIC PASS KEY"
+                                        val currentLogs = terminalLogs.toMutableList()
+                                        currentLogs.add("[-] LOGIN ATTEMPT REJECTED: INVALID SIGNATURE")
+                                        terminalLogs = currentLogs.toList()
+                                    }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = terminalGreen),

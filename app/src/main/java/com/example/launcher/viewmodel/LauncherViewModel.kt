@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
@@ -100,6 +101,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             current.add(packageName)
             _openedApps.value = current
         }
+        resetIdleTimer()
     }
 
     fun closeApp(packageName: String) {
@@ -107,6 +109,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (current.remove(packageName)) {
             _openedApps.value = current
         }
+        resetIdleTimer()
     }
 
     fun clearOpenedApps() {
@@ -167,20 +170,76 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return prefs.resetSandboxPassword(newPass)
     }
 
+    fun getSandboxLockoutCooldownTimeLeft(): Long {
+        val cooldownEnd = prefs.getSandboxCooldownTimestamp()
+        val now = System.currentTimeMillis()
+        return if (cooldownEnd > now) cooldownEnd - now else 0L
+    }
+
     fun verifySandbox(username: String, pass: String): Boolean {
+        val cooldownEnd = prefs.getSandboxCooldownTimestamp()
+        val now = System.currentTimeMillis()
+        if (cooldownEnd > now) {
+            return false
+        }
+
         val success = prefs.verifySandbox(username, pass)
         if (success) {
+            prefs.resetSandboxFailedAttempts()
             val context = getApplication<Application>()
             val sandboxDir = context.filesDir.resolve(".isospace_encrypted_sandbox")
             if (!sandboxDir.exists()) {
                 sandboxDir.mkdirs()
             }
+        } else {
+            val attempts = prefs.incrementSandboxFailedAttempts()
+            if (attempts >= 5) {
+                prefs.setSandboxCooldownTimestamp(System.currentTimeMillis() + 30000L)
+            }
         }
         return success
     }
 
+    private var idleLockJob: kotlinx.coroutines.Job? = null
+
+    fun resetIdleTimer() {
+        idleLockJob?.cancel()
+        if (_isSandboxUnlocked.value) {
+            idleLockJob = viewModelScope.launch {
+                delay(30000L) // 30 seconds idle timeout
+                lockSandbox()
+            }
+        }
+    }
+
+    fun lockSandbox() {
+        _isSandboxUnlocked.value = false
+        clearOpenedApps()
+        _terminalNotesHistory.value = emptyList()
+        _searchQuery.value = ""
+        _isDashOpen.value = false
+        _isControlCenterOpen.value = false
+        _isCustomizerOpen.value = false
+        idleLockJob?.cancel()
+    }
+
+    fun wipeSandbox() {
+        prefs.wipeSandbox()
+        lockSandbox()
+        try {
+            val context = getApplication<Application>()
+            val sandboxDir = context.filesDir.resolve(".isospace_encrypted_sandbox")
+            if (sandboxDir.exists()) {
+                sandboxDir.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun unlockSandbox() {
         _isSandboxUnlocked.value = true
+        resetIdleTimer()
     }
 
     init {

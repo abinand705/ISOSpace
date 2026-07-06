@@ -32,6 +32,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.launcher.model.AppItem
+import com.example.launcher.data.CryptSandboxUtils
 import com.example.launcher.viewmodel.LauncherViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -318,6 +319,7 @@ fun WorkspaceTabContent(
     addLog: (String) -> Unit,
     accentColor: Color
 ) {
+    val context = LocalContext.current
     val file = remember(packageName) { cloneDir.resolve("app_data.json") }
     
     // App Type Resolver
@@ -336,7 +338,7 @@ fun WorkspaceTabContent(
     LaunchedEffect(packageName) {
         if (file.exists()) {
             try {
-                val json = file.readText()
+                val json = CryptSandboxUtils.readTextEncrypted(context, file)
                 val array = JSONArray(json)
                 dataItems.clear()
                 for (i in 0 until array.length()) {
@@ -355,7 +357,7 @@ fun WorkspaceTabContent(
             }
             dataItems.clear()
             dataItems.addAll(defaultList)
-            saveSandboxedData(file, defaultList)
+            saveSandboxedData(context, file, defaultList)
             addLog("STORAGE: Initialized clean sandboxed storage partition in app_data.json")
         }
     }
@@ -363,7 +365,6 @@ fun WorkspaceTabContent(
     var textInput by rememberSaveable { mutableStateOf("") }
 
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // DUAL-APP ENGINE LAUNCH CARD
@@ -517,7 +518,7 @@ fun WorkspaceTabContent(
                     if (textInput.trim().isNotEmpty()) {
                         val newItem = textInput.trim()
                         dataItems.add(newItem)
-                        saveSandboxedData(file, dataItems)
+                        saveSandboxedData(context, file, dataItems)
                         addLog("STORAGE: Appended secure record: '$newItem'")
                         textInput = ""
                     }
@@ -593,7 +594,7 @@ fun WorkspaceTabContent(
                             IconButton(
                                 onClick = {
                                     dataItems.remove(record)
-                                    saveSandboxedData(file, dataItems)
+                                    saveSandboxedData(context, file, dataItems)
                                     addLog("STORAGE: Removed record: '$record'")
                                 },
                                 modifier = Modifier.size(24.dp)
@@ -608,11 +609,11 @@ fun WorkspaceTabContent(
     }
 }
 
-private fun saveSandboxedData(file: File, items: List<String>) {
+private fun saveSandboxedData(context: Context, file: File, items: List<String>) {
     try {
         val array = JSONArray()
         items.forEach { array.put(it) }
-        file.writeText(array.toString())
+        CryptSandboxUtils.writeTextEncrypted(context, file, array.toString())
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -631,13 +632,13 @@ fun FilesExplorerTabContent(
     LaunchedEffect(refreshTrigger, cloneDir) {
         // Enforce mock system configuration files creation to make the sandbox directory look realistic and complex!
         val config = cloneDir.resolve("network_firewall.cfg")
-        if (!config.exists()) config.writeText("firewall_mode=intercept\nblock_unencrypted=true")
+        if (!config.exists()) CryptSandboxUtils.writeTextEncrypted(context, config, "firewall_mode=intercept\nblock_unencrypted=true")
         
         val cache = cloneDir.resolve("cache_data.bin")
-        if (!cache.exists()) cache.writeText("A0F11CE43109FBC")
+        if (!cache.exists()) CryptSandboxUtils.writeTextEncrypted(context, cache, "A0F11CE43109FBC")
 
         val logs = cloneDir.resolve("security_audit.log")
-        if (!logs.exists()) logs.writeText("[SECURITY] Active hook deployed successfully.")
+        if (!logs.exists()) CryptSandboxUtils.writeTextEncrypted(context, logs, "[SECURITY] Active hook deployed successfully.")
 
         filesList = cloneDir.listFiles()?.toList() ?: emptyList()
     }
@@ -756,7 +757,9 @@ fun FilesExplorerTabContent(
             Button(
                 onClick = {
                     val audit = cloneDir.resolve("security_audit.log")
-                    audit.appendText("\n[AUDIT] Integrity verified manually on ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}")
+                    val currentLogs = CryptSandboxUtils.readTextEncrypted(context, audit)
+                    val newLogs = currentLogs + "\n[AUDIT] Integrity verified manually on ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}"
+                    CryptSandboxUtils.writeTextEncrypted(context, audit, newLogs)
                     refreshTrigger++
                     addLog("FILESYSTEM: Generated new cryptographic audit entry.")
                 },
@@ -796,6 +799,31 @@ fun IsolationShieldTabContent(
             fontWeight = FontWeight.Bold,
             fontSize = 12.sp
         )
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0x22FFCC00)),
+            border = BorderStroke(1.dp, Color(0x66FFCC00)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFFFCC00),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "DISCLAIMER: These sandbox control filters are running in simulation/preview mode. Real system-wide memory decoupling, low-level firewall routing, and identity spoofing require root privileges, a VPN service configuration, or device administrator ownership on Android.",
+                    color = Color(0xFFFFCC00),
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp
+                )
+            }
+        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = SandboxCardBg),

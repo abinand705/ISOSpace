@@ -310,6 +310,28 @@ class LauncherPreferences(context: Context) {
         return username.trim() == savedUser && pass == savedPass
     }
 
+    fun getSandboxFailedAttempts(): Int {
+        return prefs.getInt("sandbox_failed_attempts", 0)
+    }
+
+    fun incrementSandboxFailedAttempts(): Int {
+        val attempts = getSandboxFailedAttempts() + 1
+        prefs.edit().putInt("sandbox_failed_attempts", attempts).commit()
+        return attempts
+    }
+
+    fun resetSandboxFailedAttempts() {
+        prefs.edit().putInt("sandbox_failed_attempts", 0).remove("sandbox_cooldown_timestamp").commit()
+    }
+
+    fun getSandboxCooldownTimestamp(): Long {
+        return prefs.getLong("sandbox_cooldown_timestamp", 0L)
+    }
+
+    fun setSandboxCooldownTimestamp(timestamp: Long) {
+        prefs.edit().putLong("sandbox_cooldown_timestamp", timestamp).commit()
+    }
+
     fun getSandboxUsername(): String {
         return prefs.getString("sandbox_username", "") ?: ""
     }
@@ -331,6 +353,19 @@ class LauncherPreferences(context: Context) {
     fun resetSandboxPassword(newPass: String): Boolean {
         return prefs.edit()
             .putString("sandbox_password", newPass)
+            .commit()
+    }
+
+    fun wipeSandbox() {
+        prefs.edit()
+            .putBoolean("sandbox_registered", false)
+            .remove("sandbox_username")
+            .remove("sandbox_password")
+            .remove("sandbox_size_limit_gb")
+            .remove("sandbox_security_question")
+            .remove("sandbox_security_answer")
+            .remove("sandbox_failed_attempts")
+            .remove("sandbox_cooldown_timestamp")
             .commit()
     }
 
